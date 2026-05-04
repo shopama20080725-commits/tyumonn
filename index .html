@@ -1,0 +1,206 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>文化祭注文システム</title>
+
+<style>
+body {
+  font-family: sans-serif;
+  background: #f5f5f5;
+}
+
+.card {
+  background: white;
+  padding: 10px;
+  margin: 8px 0;
+  border-radius: 12px;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
+}
+
+.todo { border-left: 6px solid red; }
+.cooking { border-left: 6px solid orange; }
+.done { border-left: 6px solid green; }
+
+button { margin: 3px; }
+</style>
+
+</head>
+<body>
+
+<!-- モード選択 -->
+<div id="start">
+  <h2>モード選択</h2>
+  <button onclick="setMode('register')">レジ</button>
+  <button onclick="setMode('kitchen')">厨房</button>
+</div>
+
+<!-- レジ -->
+<div id="register" style="display:none;">
+  <h2>レジ</h2>
+
+  <label><input type="checkbox" id="takoyaki"> たこ焼き</label>
+  数量 <input type="number" id="qty_tako" value="1"><br><br>
+
+  <label><input type="checkbox" id="imoyaki"> 大学芋</label>
+  数量 <input type="number" id="qty_imo" value="1"><br><br>
+
+  <button onclick="sendOrder()">注文送信</button>
+
+  <hr>
+  <h3>注文履歴</h3>
+  <div id="history"></div>
+</div>
+
+<!-- 厨房 -->
+<div id="kitchen" style="display:none;">
+  <h2>厨房</h2>
+
+  <h3>未対応</h3>
+  <div id="todo"></div>
+
+  <h3>調理中</h3>
+  <div id="cooking"></div>
+
+  <h3>完成済み</h3>
+  <div id="done"></div>
+</div>
+
+<audio id="sound" src="https://www.soundjay.com/buttons/sounds/button-3.mp3"></audio>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  onSnapshot,
+  doc,
+  updateDoc,
+  getDoc,
+  setDoc
+} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+/* ===== Firebase（あなたの設定そのまま） ===== */
+const firebaseConfig = {
+  apiKey: "AIzaSyBB-VXdCnzvryJgtedeGahmSIPdXH1JfIY",
+  authDomain: "festival-order.firebaseapp.com",
+  projectId: "festival-order",
+  storageBucket: "festival-order.firebasestorage.app",
+  messagingSenderId: "675210507984",
+  appId: "1:675210507984:web:3223135299c296289250d5"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+/* ===== モード切替 ===== */
+window.setMode = function(mode){
+  document.getElementById("start").style.display = "none";
+  if(mode==="register") document.getElementById("register").style.display="block";
+  if(mode==="kitchen") document.getElementById("kitchen").style.display="block";
+};
+
+/* ===== 注文番号（ズレない） ===== */
+async function getNextOrderNumber(){
+  const ref = doc(db,"meta","counter");
+  const snap = await getDoc(ref);
+
+  let num = 1;
+  if(snap.exists()){
+    num = snap.data().value + 1;
+  }
+
+  await setDoc(ref,{ value:num });
+  return num;
+}
+
+/* ===== 注文送信 ===== */
+window.sendOrder = async function(){
+
+  let items = [];
+
+  if(document.getElementById("takoyaki").checked){
+    items.push(`たこ焼き×${document.getElementById("qty_tako").value}`);
+  }
+
+  if(document.getElementById("imoyaki").checked){
+    items.push(`大学芋×${document.getElementById("qty_imo").value}`);
+  }
+
+  if(items.length===0) return;
+
+  const orderNumber = await getNextOrderNumber();
+
+  await addDoc(collection(db,"orders"),{
+    item: items.join(" / "),
+    orderNumber,
+    status:"未対応",
+    time:Date.now()
+  });
+};
+
+/* ===== 表示（カード型） ===== */
+onSnapshot(collection(db,"orders"), (snapshot)=>{
+
+  const todo = document.getElementById("todo");
+  const cooking = document.getElementById("cooking");
+  const done = document.getElementById("done");
+  const history = document.getElementById("history");
+
+  if(todo) todo.innerHTML="";
+  if(cooking) cooking.innerHTML="";
+  if(done) done.innerHTML="";
+  if(history) history.innerHTML="";
+
+  document.getElementById("sound").play().catch(()=>{});
+
+  snapshot.forEach((d)=>{
+
+    const data = d.data();
+
+    const card = document.createElement("div");
+    card.classList.add("card");
+
+    if(data.status==="未対応") card.classList.add("todo");
+    if(data.status==="調理中") card.classList.add("cooking");
+    if(data.status==="完成済み") card.classList.add("done");
+
+    card.innerHTML = `
+      <b>#${data.orderNumber}</b><br>
+      ${data.item}<br>
+      [${data.status}]<br>
+      <button onclick="setCooking('${d.id}')">調理中</button>
+      <button onclick="setDone('${d.id}')">完成</button>
+    `;
+
+    const hist = document.createElement("div");
+    hist.className="card";
+    hist.innerHTML = `#${data.orderNumber} ${data.item} [${data.status}]`;
+
+    if(data.status==="未対応" && todo) todo.appendChild(card);
+    if(data.status==="調理中" && cooking) cooking.appendChild(card);
+    if(data.status==="完成済み" && done) done.appendChild(card);
+
+    if(history) history.appendChild(hist);
+  });
+});
+
+/* ===== ステータス ===== */
+window.setCooking = async function(id){
+  await updateDoc(doc(db,"orders",id),{
+    status:"調理中"
+  });
+};
+
+window.setDone = async function(id){
+  await updateDoc(doc(db,"orders",id),{
+    status:"完成済み"
+  });
+};
+
+</script>
+
+</body>
+</html>
